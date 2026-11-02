@@ -4,5 +4,5 @@ Every step from the reference to your final version, each with the live-board ru
 
 | Step | Change | Run ID | T (s) | M (MB) | Points |
 |---|---|---|---|---|---|
-| 0 | The reference, unchanged | | 14.44 | 367 | 0 |
-| 1 | | | | | |
+| 0 | The reference, unchanged | | 67.12 | 1,800 | 0 |
+| 1 | Ported to Rust with custom CSV parser | | | | |

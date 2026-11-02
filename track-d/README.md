@@ -4,12 +4,12 @@ The task, the input files and the exact output format are in the [spec](https://
 
 ## Approach
 
-How your solution works, in plain prose.
+Rust implementation using Dijkstra's algorithm with a binary heap (priority queue). Loads the entire graph into memory as an adjacency list. For each query, runs a fresh Dijkstra search from the source node, stopping as soon as the target is settled. Uses standard library HashMap for distance tracking and saturating arithmetic to handle large weights safely.
 
 ## Dependencies
 
-None.
+None (uses only Rust standard library)
 
 ## With another 24 hours
 
-What you would do next.
+Would explore bidirectional Dijkstra or A* with heuristics for faster query processing. Could also consider preprocessing with landmark-based routing.

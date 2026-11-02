@@ -4,12 +4,13 @@ The task, the input files and the exact output format are in the [spec](https://
 
 ## Approach
 
-How your solution works, in plain prose.
+Rust implementation with an efficient inverted index using hashbrown HashMap for O(1) term lookups. Boolean queries use sorted set operations (intersection, union, difference) on pre-sorted posting lists. Phrase queries intersect posting lists first, then verify token sequences by re-tokenizing only candidate documents. Tokenization is byte-based ASCII-only as specified.
 
 ## Dependencies
 
-None.
+- hashbrown: Fast HashMap implementation
+- memchr: Optimized byte searching
 
 ## With another 24 hours
 
-What you would do next.
+Would explore phrase indexing with position postings to avoid re-tokenization for phrase queries.

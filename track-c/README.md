@@ -4,12 +4,13 @@ The task, the input files and the exact output format are in the [spec](https://
 
 ## Approach
 
-How your solution works, in plain prose.
+Rust implementation with custom CSV parser that handles all edge cases: BOM handling, quoted fields with embedded commas/newlines, escaped quotes, and mixed CRLF/LF terminators. Uses hashbrown HashMap for fast region lookup and country aggregation. Reads entire CSV into memory for sequential parsing.
 
 ## Dependencies
 
-None.
+- hashbrown: Fast HashMap implementation
+- memchr: Optimized byte searching
 
 ## With another 24 hours
 
-What you would do next.
+Would explore streaming CSV parsing to reduce memory usage for very large datasets.
