@@ -6,3 +6,4 @@ Every step from the reference to your final version, each with the live-board ru
 |---|---|---|---|---|---|
 | 0 | The reference, unchanged | | 32.05 | 228 | 0 |
 | 1 | Simple single-threaded Rust implementation | | | | |
+| 2 | mmap/one big read optimization | | | | |

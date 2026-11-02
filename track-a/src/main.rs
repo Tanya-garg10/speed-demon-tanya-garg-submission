@@ -1,12 +1,55 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::Path;
 
 const INPUT_NAME: &str = "requests.log";
 const OUTPUT_NAME: &str = "summary.txt";
 
-type Key = (String, String); // (hour_string, endpoint)
+// Hour strings are always 20 bytes: YYYY-MM-DDTHH:00:00Z
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct HourString([u8; 20]);
+
+impl HourString {
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.0).unwrap()
+    }
+}
+
+// Simple string interning for endpoints
+struct StringInterner {
+    strings: Vec<Vec<u8>>,
+    map: HashMap<Vec<u8>, usize>,
+}
+
+impl StringInterner {
+    fn new() -> Self {
+        Self {
+            strings: Vec::new(),
+            map: HashMap::new(),
+        }
+    }
+    
+    fn intern(&mut self, bytes: &[u8]) -> usize {
+        if let Some(&id) = self.map.get(bytes) {
+            return id;
+        }
+        let id = self.strings.len();
+        self.strings.push(bytes.to_vec());
+        self.map.insert(bytes.to_vec(), id);
+        id
+    }
+    
+    fn get(&self, id: usize) -> &[u8] {
+        &self.strings[id]
+    }
+    
+    fn get_str(&self, id: usize) -> &str {
+        std::str::from_utf8(&self.strings[id]).unwrap()
+    }
+}
+
+type Key = (HourString, usize); // (hour_string, endpoint_id)
 
 fn percentile(sorted_values: &[u32], p: u32) -> u32 {
     let n = sorted_values.len();
@@ -15,20 +58,36 @@ fn percentile(sorted_values: &[u32], p: u32) -> u32 {
     sorted_values[rank - 1]
 }
 
-fn parse_timestamp_to_hour(ts: &str) -> String {
-    // Input format: YYYY-MM-DDTHH:MM:SS.ffffffZ (27 bytes fixed)
-    // Truncate to hour: keep date and hour part, set minutes/seconds/microseconds to 0
-    // Example: "2026-10-30T18:59:59.999999Z" -> "2026-10-30T18:00:00Z"
+
+
+fn parse_u32_from_bytes(bytes: &[u8]) -> u32 {
+    // Parse ASCII digits to u32 without allocation
+    // Bytes are guaranteed to be ASCII digits (0-9) only
+    let mut result = 0u32;
+    for &byte in bytes {
+        result = result * 10 + (byte - b'0') as u32;
+    }
+    result
+}
+
+fn parse_hour_from_timestamp_bytes(bytes: &[u8]) -> HourString {
+    // Parse timestamp bytes directly (format: YYYY-MM-DDTHH:MM:SS.ffffffZ)
+    // Extract hour and format as YYYY-MM-DDTHH:00:00Z (20 bytes)
+    // We know timestamp is exactly 27 bytes: YYYY-MM-DDTHH:MM:SS.ffffffZ
+    let mut hour_bytes = [0u8; 20];
     
-    // Parse year, month, day, hour from the timestamp
-    // Format: YYYY-MM-DDTHH:MM:SS.ffffffZ
-    let year: i32 = ts[0..4].parse().unwrap();
-    let month: u32 = ts[5..7].parse().unwrap();
-    let day: u32 = ts[8..10].parse().unwrap();
-    let hour: u32 = ts[11..13].parse().unwrap();
+    // Copy YYYY-MM-DDTHH: (first 13 bytes)
+    hour_bytes[0..13].copy_from_slice(&bytes[0..13]);
+    // Add ":00:00Z" (7 bytes)
+    hour_bytes[13] = b':';
+    hour_bytes[14] = b'0';
+    hour_bytes[15] = b'0';
+    hour_bytes[16] = b':';
+    hour_bytes[17] = b'0';
+    hour_bytes[18] = b'0';
+    hour_bytes[19] = b'Z';
     
-    // Format back as YYYY-MM-DDTHH:00:00Z
-    format!("{:04}-{:02}-{:02}T{:02}:00:00Z", year, month, day, hour)
+    HourString(hour_bytes)
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,33 +116,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Data structures
     let mut latencies: HashMap<Key, Vec<u32>> = HashMap::new();
     let mut errors: HashMap<Key, u32> = HashMap::new();
+    let mut interner = StringInterner::new();
 
-    // Read and process file
-    let file = File::open(&input_path)?;
-    let reader = BufReader::new(file);
-
-    for line in reader.lines() {
-        let line = line?;
-        let parts: Vec<&str> = line.split(' ').collect();
-        if parts.len() != 5 {
-            continue; // Skip malformed lines (shouldn't happen with valid input)
+    // Read entire file into memory
+    let data = fs::read(&input_path)?;
+    
+    // Process file byte by byte
+    let mut pos = 0;
+    let len = data.len();
+    
+    while pos < len {
+        // Find end of line
+        let line_start = pos;
+        while pos < len && data[pos] != b'\n' {
+            pos += 1;
         }
-
-        let ts = parts[0];
-        let endpoint = parts[2];
-        let status = parts[3];
-        let latency_str = parts[4];
-
-        // Parse hour from timestamp
-        let hour = parse_timestamp_to_hour(ts);
+        let line_end = pos;
         
-        // Parse latency
-        let latency: u32 = latency_str.parse()?;
+        // Skip empty lines
+        if line_start == line_end {
+            pos += 1; // Skip the newline
+            continue;
+        }
         
-        // Parse status
-        let status_code: u32 = status.parse()?;
+        // Parse line directly from bytes
+        let line = &data[line_start..line_end];
         
-        let key = (hour, endpoint.to_string());
+        // Parse fields in a single pass
+        let mut field_starts = [0usize; 5];
+        let mut field_idx = 0;
+        field_starts[0] = 0;
+        
+        for (i, &byte) in line.iter().enumerate() {
+            if byte == b' ' {
+                field_idx += 1;
+                if field_idx < 5 {
+                    field_starts[field_idx] = i + 1;
+                } else {
+                    // More than 4 spaces - malformed line
+                    break;
+                }
+            }
+        }
+        
+        if field_idx != 4 {
+            // Malformed line (shouldn't happen with valid input)
+            pos += 1; // Skip the newline
+            continue;
+        }
+        
+        // Extract fields as byte slices
+        let ts_bytes = &line[field_starts[0]..(field_starts[1] - 1)];
+        let endpoint_bytes = &line[field_starts[2]..(field_starts[3] - 1)];
+        let status_bytes = &line[field_starts[3]..(field_starts[4] - 1)];
+        let latency_bytes = &line[field_starts[4]..];
+        
+        // Parse hour directly from timestamp bytes (format: YYYY-MM-DDTHH:MM:SS.ffffffZ)
+        let hour_bytes = parse_hour_from_timestamp_bytes(ts_bytes);
+        
+        // Intern endpoint
+        let endpoint_id = interner.intern(endpoint_bytes);
+        
+        // Parse status from bytes
+        let status_code = parse_u32_from_bytes(status_bytes);
+        
+        // Parse latency from bytes
+        let latency = parse_u32_from_bytes(latency_bytes);
+        
+        let key = (hour_bytes, endpoint_id);
         
         // Update latencies
         latencies.entry(key.clone()).or_insert_with(Vec::new).push(latency);
@@ -92,6 +192,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if status_code >= 500 && status_code <= 599 {
             *errors.entry(key).or_insert(0) += 1;
         }
+        
+        pos += 1; // Skip the newline
     }
 
     // Prepare output
@@ -99,10 +201,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Collect and sort keys: first by hour, then by endpoint (bytewise order)
     let mut keys: Vec<Key> = latencies.keys().cloned().collect();
-    keys.sort(); // Rust's default sort works for (String, String) tuple
+    keys.sort_by(|a, b| {
+        a.0.cmp(&b.0).then_with(|| {
+            let a_bytes = interner.get(a.1);
+            let b_bytes = interner.get(b.1);
+            a_bytes.cmp(b_bytes)
+        })
+    });
     
     for key in keys {
-        let (hour, endpoint) = &key;
+        let (hour_string, endpoint_id) = &key;
+        let hour_str = hour_string.as_str();
+        let endpoint_str = interner.get_str(*endpoint_id);
         let mut latency_vec = latencies.remove(&key).unwrap();
         latency_vec.sort_unstable();
         
@@ -116,7 +226,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         
         output_lines.push(format!(
             "{} {} {} {} {} {} {} {}\n",
-            hour, endpoint, count, p50, p95, p99, errs, ppm
+            hour_str, endpoint_str, count, p50, p95, p99, errs, ppm
         ));
     }
 

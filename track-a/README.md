@@ -4,7 +4,7 @@ The task, the input files and the exact output format are in the [spec](https://
 
 ## Approach
 
-Simple single-threaded Rust implementation following the reference algorithm:
+**Step 1: Simple single-threaded Rust implementation** following the reference algorithm:
 1. Read file line by line with `BufReader`
 2. Parse each line: split on spaces, parse timestamp to hour, parse latency and status
 3. Store latencies in `HashMap<Key, Vec<u32>>` where Key = (hour_string, endpoint)
@@ -12,7 +12,18 @@ Simple single-threaded Rust implementation following the reference algorithm:
 5. After reading all lines: sort keys, sort each latency vector, compute percentiles
 6. Write output with proper formatting
 
-This is the baseline correct implementation before optimization.
+**Step 2: mmap/one big read optimization** (current):
+1. Read entire file into memory with `fs::read()` (239 MB fits in 8 GB limit)
+2. Parse lines by scanning for `\n` bytes directly in the byte buffer
+3. Extract fields by finding space bytes without creating string allocations
+4. Parse numbers from byte slices with custom `parse_u32_from_bytes()` function
+5. Same data structures and processing as Step 1, but without per-line string allocations
+
+**Benefits of mmap approach:**
+- No per-line `String` allocations (each line in Python/naive Rust creates a new string)
+- No `split()` overhead (scans bytes directly)
+- No `parse()` allocations (parses integers directly from bytes)
+- Single memory allocation for entire file vs many small allocations
 
 ## Dependencies
 
