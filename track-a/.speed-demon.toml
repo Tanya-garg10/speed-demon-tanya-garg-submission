@@ -1,5 +1,5 @@
 # Read by the board and the scoring harness.
 track = "a"
-team = "your team name"
-language = "Python"
+team = "Rust Performance Team"  # TODO: Change to your actual team name
+language = "Rust"
 dependency_count = 0
